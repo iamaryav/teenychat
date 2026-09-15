@@ -1,0 +1,9 @@
+[project]
+name = "teenychat"
+version = "0.1.0"
+description = "A teeny tiny chatGPT"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.2.6",
+]
