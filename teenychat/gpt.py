@@ -2,10 +2,10 @@
 - decoder only transformer
 - RoPE
 - Pre LN
+- RMSNorm
 - ReLU or other
 - GQA
 - kv cache
-- LayerNorm or RMSNorm decide
 
 """
 import torch
