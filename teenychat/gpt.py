@@ -25,10 +25,12 @@ class GPTConfig:
 
 class GPT(nn.Module):
 
-    def __init__(self):
-
-        pass
+    def __init__(self, config):
+        super().__init__()
+        print("hi")
 
 
 if __name__ == "__main__":
-    print("hi")
+    config = GPTConfig()
+    gpt = GPT(config)
+    print("main")
