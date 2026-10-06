@@ -1,6 +1,7 @@
 
 
-Architecture -> Training -> Post-training -> Inference
+- Architecture -> Training -> Post-training -> Inference
 Data
-Benchmarking
-tool use
+- Benchmarking on each phase
+- tool use - python?
+- web search - google?
