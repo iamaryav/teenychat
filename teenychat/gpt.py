@@ -21,15 +21,15 @@ class GPTConfig:
     vocab_size: int = 50257
     max_seq_len: int = 1024
     hidden_size: int = 768
+    intermediate_size: int = 768 * 4
     num_hidden_layers: int = 12
     num_heads: int = 12
     num_kv_heads: int = 2
-    rms_norm_eps: float = 1e-8
+    rms_norm_eps: float = 1e-6
 
 # torch has default implementation
-# class RMSNorm(nn.Module):
-#     def __init__(self, hidden_size, rms_norm_eps):
-#         pass
+def rms_norm(x):
+    pass
 
 class RotaryEmbedding(nn.Module):
 
@@ -39,12 +39,46 @@ class RotaryEmbedding(nn.Module):
 
 
 class CausalAttention(nn.Module):
-    pass
+    def __init__(self, config):
+        super().__init__()
+        self.num_heads = config.num_heads
+        self.num_kv_heads = config.num_kv_heads
+        assert config.hidden_size % config.num_heads == 0
+        assert config.num_kv_heads <= config.num_heads and config.num_heads % config.num_kv_heads == 0 
+        self.head_size = config.hidden_size // config.num_heads
+        self.query = nn.Linear(config.hidden_size, config.num_heads * self.head_size, bias=False)
+        self.key = nn.Linear(config.hidden_size, config.num_kv_heads * self.head_size, bias=False)
+        self.value = nn.Linear(config.hidden_size, config.num_kv_heads * self.head_size, bias=False)
+        self.out_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+
+    def forward(self, x):
+        # self causal attention implementation
+        B, T, C = x.size()
+        # Multi head
+        # (B, T, C) -> (B, T, nh, h) -> (B, nh, T, h)
+        q = self.query(x).view(B, T, self.num_heads, self.head_size).transpose(1, 2) # (B, num_heads, T, head_size)
+        k = self.key(x).view(B, T, self.num_kv_heads, self.head_size).transpose(1, 2) # (B, num_kv_heads, T, head_size)
+        v = self.value(x).view(B, T, self.num_kv_heads, self.head_size).transpose(1, 2) # (B, num_kv_heads, T, head_size)
+        # apply rotary embd
+        
+        # repeat k and v nh // n_kv_h
+        # calculate attention 
+        # reshape and apply the out_proj
+        # return
+
+
+
+        pass
 
 class MLP(nn.Module):
-    def __init__(self):
-        self.
+    def __init__(self, config):
+        super().__init__()
+        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
         self.act_fn = nn.ReLU()
+        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
+
+    def forward(self, x):
+        pass
 
 
 
@@ -67,11 +101,9 @@ class GPT(nn.Module):
         self.token_embd = nn.Embedding(config.vocab_size, config.hidden_size)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_hidden_layers)])
 
-        # last projection depends on the vocab size
         self.rotary_embd = RotaryEmbedding(config=config)
-        # torch has inbuilt version for rms norm
-        # self.rms_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
+        # last projection depends on the vocab size
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
 
 
