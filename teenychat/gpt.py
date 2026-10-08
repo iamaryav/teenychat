@@ -37,6 +37,21 @@ class RotaryEmbedding(nn.Module):
         super().__init__()
         pass
 
+def apply_rotary_embd(x, cos, sin):
+    # you have a multidimensional vector
+    # apply the rotary embd - roatate it by some angle
+    # x, y pair from weights first half x and second half y
+    # then apply the rotation formula
+    assert x.ndim == 4 # Multi Head Attention
+    d = x.shape[3] // 2
+    x1, x2 = x[..., d:], x[..., :d] # spliting the hidden dim in two half (x, y)
+    # rotate in clockwise rotation
+    y1 = x1 * cos - x2 * sin # 
+    y2 = x1 * sin + x2 * cos
+    return torch.cat([y1, y2], 3)
+
+
+
 
 class CausalAttention(nn.Module):
     def __init__(self, config):
@@ -51,7 +66,7 @@ class CausalAttention(nn.Module):
         self.value = nn.Linear(config.hidden_size, config.num_kv_heads * self.head_size, bias=False)
         self.out_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, cos, sin):
         # self causal attention implementation
         B, T, C = x.size()
         # Multi head
@@ -60,6 +75,7 @@ class CausalAttention(nn.Module):
         k = self.key(x).view(B, T, self.num_kv_heads, self.head_size).transpose(1, 2) # (B, num_kv_heads, T, head_size)
         v = self.value(x).view(B, T, self.num_kv_heads, self.head_size).transpose(1, 2) # (B, num_kv_heads, T, head_size)
         # apply rotary embd
+        q, k = apply_rotary_embd(q), apply_rotary_embd(k)
         
         # repeat k and v nh // n_kv_h
         # calculate attention 
