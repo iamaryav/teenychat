@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
+import torch.nn.functional as F
 
 @dataclass
 class GPTConfig:
@@ -25,11 +25,11 @@ class GPTConfig:
     num_hidden_layers: int = 12
     num_heads: int = 12
     num_kv_heads: int = 2
-    rms_norm_eps: float = 1e-6
+    theta_base: int = 100000
 
 # torch has default implementation
-def rms_norm(x):
-    pass
+def norm(x):
+    return F.rms_norm(x, (x.size(-1),))
 
 class RotaryEmbedding(nn.Module):
 
@@ -44,12 +44,20 @@ def apply_rotary_embd(x, cos, sin):
     # then apply the rotation formula
     assert x.ndim == 4 # Multi Head Attention
     d = x.shape[3] // 2
-    x1, x2 = x[..., d:], x[..., :d] # spliting the hidden dim in two half (x, y)
+    x1, x2 = x[..., :d], x[..., d:] # spliting the hidden dim in two half (x, y)
     # rotate in clockwise rotation
     y1 = x1 * cos - x2 * sin # 
     y2 = x1 * sin + x2 * cos
     return torch.cat([y1, y2], 3)
 
+def _precompute_rotary_embedding(seq_len, head_size, base=100000):
+    channel_range = torch.arange(0, head_size, 2)
+    t = torch.arange(0, seq_len)
+    inv_freq = 1.0 / (base ** (channel_range / head_size))
+    freqs = torch.outer(t, inv_freq)
+    cos, sin = freqs.cos(), freqs.sin()
+    cos, sin = cos[None, :, None, :], sin[None, :, None, :]
+    return cos, sin
 
 
 
@@ -66,25 +74,24 @@ class CausalAttention(nn.Module):
         self.value = nn.Linear(config.hidden_size, config.num_kv_heads * self.head_size, bias=False)
         self.out_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
 
-    def forward(self, x, cos, sin):
+    def forward(self, x, cos_sin):
         # self causal attention implementation
         B, T, C = x.size()
         # Multi head
         # (B, T, C) -> (B, T, nh, h) -> (B, nh, T, h)
-        q = self.query(x).view(B, T, self.num_heads, self.head_size).transpose(1, 2) # (B, num_heads, T, head_size)
-        k = self.key(x).view(B, T, self.num_kv_heads, self.head_size).transpose(1, 2) # (B, num_kv_heads, T, head_size)
+        q = self.query(x).view(B, T, self.num_heads, self.head_size) # (B, T, num_heads, head_size)
+        k = self.key(x).view(B, T, self.num_kv_heads, self.head_size) # (B, T, num_kv_heads, head_size)
         v = self.value(x).view(B, T, self.num_kv_heads, self.head_size).transpose(1, 2) # (B, num_kv_heads, T, head_size)
         # apply rotary embd
-        q, k = apply_rotary_embd(q), apply_rotary_embd(k)
-        
-        # repeat k and v nh // n_kv_h
-        # calculate attention 
-        # reshape and apply the out_proj
-        # return
-
-
-
-        pass
+        cos, sin = cos_sin
+        q, k = apply_rotary_embd(q, cos, sin), apply_rotary_embd(k, cos, sin)
+        q, k = norm(q), norm(k) # Qk Norm
+        q, k = q.transpose(1, 2), k.transpose(1, 2)
+        enable_gqa = q.size(1) != k.size(1) # num_heads in key and query are not same
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa) # (B, num_heads, T, head_size)
+        y = y.transpose(1, 2).contiguous().view(B, T, -1) # (B, T, C)
+        y = self.out_proj(y)
+        return y
 
 class MLP(nn.Module):
     def __init__(self, config):
@@ -132,3 +139,4 @@ if __name__ == "__main__":
     config = GPTConfig()
     gpt = GPT(config)
     print("main")
+    # test the causal attention method
