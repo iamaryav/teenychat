@@ -136,7 +136,24 @@ class GPT(nn.Module):
 
 
 if __name__ == "__main__":
-    config = GPTConfig()
-    gpt = GPT(config)
-    print("main")
+    torch.manual_seed(0)
     # test the causal attention method
+    # (num_heads, num_kv_heads): MHA and GQA
+    for num_heads, num_kv_heads in [(2, 2), (4, 2)]:
+        config = GPTConfig(max_seq_len=4, hidden_size=16, num_heads=num_heads, num_kv_heads=num_kv_heads)
+        head_size = config.hidden_size // config.num_heads
+        B, T, C = 2, config.max_seq_len, config.hidden_size
+        cos_sin = _precompute_rotary_embedding(T, head_size, config.theta_base) # (1, T, 1, head_size // 2)
+        sa = CausalAttention(config)
+
+        x = torch.randn((B, T, C))
+        out = sa(x, cos_sin)
+        assert out.shape == (B, T, C)
+
+        # causal check: a change in the last token must not change earlier positions
+        x2 = x.clone()
+        x2[:, -1] += 1.0
+        out2 = sa(x2, cos_sin)
+        assert torch.allclose(out[:, :-1], out2[:, :-1], atol=1e-6)
+        assert not torch.allclose(out[:, -1], out2[:, -1])
+        print(f"ok num_heads={num_heads} num_kv_heads={num_kv_heads} out={tuple(out.shape)}")
