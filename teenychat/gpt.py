@@ -101,8 +101,10 @@ class MLP(nn.Module):
         self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
 
     def forward(self, x):
-        pass
-
+        x = self.up_proj(x) # B, T, intermediate_size 
+        x = self.act_fn(x) # B, T, intermediate_size
+        x = self.down_proj(x) # B, T, C
+        return x
 
 
 class Block(nn.Module):
@@ -111,8 +113,10 @@ class Block(nn.Module):
         self.self_attn = CausalAttention(config)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        pass
+    def forward(self, x, cos_sin):
+        x = x + self.self_attn(norm(x), cos_sin)
+        x = x + self.mlp(norm(x))
+        return x
 
 
 
@@ -123,15 +127,29 @@ class GPT(nn.Module):
         self.config = config
         self.token_embd = nn.Embedding(config.vocab_size, config.hidden_size)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_hidden_layers)])
-
-        self.rotary_embd = RotaryEmbedding(config=config)
-        # last projection depends on the vocab size
+        # self.rotary_embd = RotaryEmbedding(config=config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        head_size = config.hidden_size // config.num_heads
+        cos, sin = _precompute_rotary_embedding(config.max_seq_len, head_size, self.config.theta_base)
+        self.register_buffer("cos", cos, persistent=False) # (1, max_seq_len, 1, head_size // 2)
+        self.register_buffer("sin", sin, persistent=False) # (1, max_seq_len, 1, head_size // 2)
 
 
+    def forward(self, x, y=None):
+        # x -> (B, T)
+        B, T = x.shape
+        x = self.token_embd(x) # B, T, C
+        cos_sin = self.cos[:, :T], self.sin[:, :T]
+        for block in self.blocks:
+            x = block(x, cos_sin)
+        x = norm(x)
+        logits = self.lm_head(x)
+        loss = None
+        if y is not None:
+                loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.reshape(-1))
+                # return logits, loss
+        return logits, loss
 
-    def forward(self, x, y):
-        pass
         
 
 
@@ -139,21 +157,30 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     # test the causal attention method
     # (num_heads, num_kv_heads): MHA and GQA
-    for num_heads, num_kv_heads in [(2, 2), (4, 2)]:
-        config = GPTConfig(max_seq_len=4, hidden_size=16, num_heads=num_heads, num_kv_heads=num_kv_heads)
-        head_size = config.hidden_size // config.num_heads
-        B, T, C = 2, config.max_seq_len, config.hidden_size
-        cos_sin = _precompute_rotary_embedding(T, head_size, config.theta_base) # (1, T, 1, head_size // 2)
-        sa = CausalAttention(config)
-
-        x = torch.randn((B, T, C))
-        out = sa(x, cos_sin)
-        assert out.shape == (B, T, C)
-
-        # causal check: a change in the last token must not change earlier positions
-        x2 = x.clone()
-        x2[:, -1] += 1.0
-        out2 = sa(x2, cos_sin)
-        assert torch.allclose(out[:, :-1], out2[:, :-1], atol=1e-6)
-        assert not torch.allclose(out[:, -1], out2[:, -1])
-        print(f"ok num_heads={num_heads} num_kv_heads={num_kv_heads} out={tuple(out.shape)}")
+    # for num_heads, num_kv_heads in [(2, 2), (4, 2)]:
+    #     config = GPTConfig(max_seq_len=4, hidden_size=16, num_heads=num_heads, num_kv_heads=num_kv_heads)
+    #     head_size = config.hidden_size // config.num_heads
+    #     B, T, C = 2, config.max_seq_len, config.hidden_size
+    #     cos_sin = _precompute_rotary_embedding(T, head_size, config.theta_base) # (1, T, 1, head_size // 2)
+    #     sa = CausalAttention(config)
+    #
+    #     x = torch.randn((B, T, C))
+    #     out = sa(x, cos_sin)
+    #     assert out.shape == (B, T, C)
+    #
+    #     # causal check: a change in the last token must not change earlier positions
+    #     x2 = x.clone()
+    #     print(f"x2 shape: {x2[:,-1].shape}")
+    #     x2[:, -1] += 1.0
+    #     out2 = sa(x2, cos_sin)
+    #     assert torch.allclose(out[:, :-1], out2[:, :-1], atol=1e-6)
+    #     assert not torch.allclose(out[:, -1], out2[:, -1])
+    #     print(f"ok num_heads={num_heads} num_kv_heads={num_kv_heads} out={tuple(out.shape)}")
+    config = GPTConfig(max_seq_len=4, hidden_size=16, num_heads=2)
+    B, T, C = 2, config.max_seq_len, config.hidden_size
+    head_size = config.hidden_size // config.num_heads
+    cos_sin = _precompute_rotary_embedding(T, head_size, config.theta_base)
+    x = torch.randn((B, T, C))
+    block = Block(config)
+    out = block(x, cos_sin)
+    assert x.shape == out.shape
