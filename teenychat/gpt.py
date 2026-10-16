@@ -10,6 +10,7 @@
 - kv cache
 """
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -176,11 +177,17 @@ if __name__ == "__main__":
     #     assert torch.allclose(out[:, :-1], out2[:, :-1], atol=1e-6)
     #     assert not torch.allclose(out[:, -1], out2[:, -1])
     #     print(f"ok num_heads={num_heads} num_kv_heads={num_kv_heads} out={tuple(out.shape)}")
-    config = GPTConfig(max_seq_len=4, hidden_size=16, num_heads=2)
+    # config = GPTConfig(max_seq_len=4, hidden_size=16, num_heads=2)
+    config = GPTConfig()
     B, T, C = 2, config.max_seq_len, config.hidden_size
     head_size = config.hidden_size // config.num_heads
     cos_sin = _precompute_rotary_embedding(T, head_size, config.theta_base)
-    x = torch.randn((B, T, C))
-    block = Block(config)
-    out = block(x, cos_sin)
-    assert x.shape == out.shape
+    x = torch.randint(0, config.vocab_size, (B, T)) 
+    y = torch.randint(0, config.vocab_size, (B, T)) 
+    model = GPT(config)
+    logits, loss = model(x, y)
+
+    print(f"loss: {loss}")
+    assert abs(loss.item() - math.log(config.vocab_size)) <= 1.0
+    assert logits.shape == (B, T, config.vocab_size)
+    
